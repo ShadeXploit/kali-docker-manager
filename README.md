@@ -1,6 +1,6 @@
 # Kali Docker Persistent Manager
 
-A production-focused Bash utility for managing a persistent Kali Linux Docker container on an Arch Linux host.
+A Bash utility for managing a persistent Kali Linux Docker container on an Arch Linux host.
 
 The script automates install, start/attach, and full cleanup workflows for a named Kali container with a persistent Docker volume.
 
