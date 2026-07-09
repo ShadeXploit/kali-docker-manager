@@ -104,7 +104,7 @@ delete_all() {
   ensure_docker_available
   ensure_docker_running
 
-  read -r -p "This will delete container, volume, and image. Continue? (y/n): " confirm
+  read -r -p "This will permanently delete container, volume, and image. Continue? (y/n): " confirm
   case "$confirm" in
     y|Y)
       ;;
@@ -115,33 +115,34 @@ delete_all() {
   esac
 
   if container_exists; then
-    if container_running; then
-      echo "Stopping container: $CONTAINER_NAME"
-      docker stop "$CONTAINER_NAME" >/dev/null
-    fi
-    echo "Removing container: $CONTAINER_NAME"
-    docker rm "$CONTAINER_NAME" >/dev/null
+    # Force removal ensures cleanup even if the container is still running.
+    echo "Removing container (force): $CONTAINER_NAME"
+    docker rm -f "$CONTAINER_NAME" >/dev/null
   else
     echo "Container not found: $CONTAINER_NAME"
   fi
 
   if volume_exists; then
-    echo "Removing volume: $VOLUME_NAME"
-    docker volume rm "$VOLUME_NAME" >/dev/null
+    # Force volume removal to avoid partial cleanup states.
+    echo "Removing volume (force): $VOLUME_NAME"
+    docker volume rm -f "$VOLUME_NAME" >/dev/null
   else
     echo "Volume not found: $VOLUME_NAME"
   fi
 
   if docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-    echo "Removing image: $IMAGE_NAME"
-    docker rmi "$IMAGE_NAME" >/dev/null || {
-      echo "Warning: Could not remove image '$IMAGE_NAME' (it may still be used by another container)." >&2
-    }
+    # Force image removal so this environment is fully reset for this image tag.
+    echo "Removing image (force): $IMAGE_NAME"
+    docker image rm -f "$IMAGE_NAME" >/dev/null
   else
     echo "Image not found locally: $IMAGE_NAME"
   fi
 
-  echo "Cleanup complete: container, volume, and image removal steps finished."
+  if container_exists || volume_exists || docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    error "Cleanup did not fully complete. One or more resources still exist."
+  fi
+
+  echo "Cleanup complete: Kali container, volume, and image were fully removed."
 }
 
 main() {
