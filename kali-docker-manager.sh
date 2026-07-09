@@ -49,7 +49,6 @@ install_docker_if_needed() {
   sudo usermod -aG docker "$USER"
 
   echo "Docker installation complete!"
-  newgrp docker
 }
 
 ensure_docker_available() {
@@ -86,6 +85,12 @@ container_running() {
 install_container() {
   install_docker_if_needed
   ensure_docker_available
+  
+  # Refresh shell group membership if docker was just installed
+  if ! docker info >/dev/null 2>&1; then
+    exec newgrp docker
+  fi
+  
   ensure_docker_running
 
   # Create a named volume once; it stores /root to keep data persistent.
@@ -114,6 +119,12 @@ install_container() {
 start_container() {
   install_docker_if_needed
   ensure_docker_available
+  
+  # Refresh shell group membership if docker was just installed
+  if ! docker info >/dev/null 2>&1; then
+    exec newgrp docker
+  fi
+  
   ensure_docker_running
 
   if ! container_exists; then
