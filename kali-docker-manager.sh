@@ -31,7 +31,7 @@ install_docker_if_needed() {
 
   echo "Docker is not installed. Installing Docker and dependencies..."
 
-  # Update package lists
+  # Update package lists 
   echo "Updating package lists..."
   sudo pacman -Sy --noconfirm
 
@@ -129,7 +129,6 @@ start_container() {
     echo "Starting and attaching to container '$CONTAINER_NAME'..."
     docker start -ai "$CONTAINER_NAME"
   fi
-}
 }
 
 delete_all() {
