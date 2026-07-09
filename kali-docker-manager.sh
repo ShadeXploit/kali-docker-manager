@@ -23,6 +23,35 @@ error() {
   exit 1
 }
 
+install_docker_if_needed() {
+  if command -v docker >/dev/null 2>&1; then
+    echo "Docker is already installed."
+    return 0
+  fi
+
+  echo "Docker is not installed. Installing Docker and dependencies..."
+
+  # Update package lists
+  echo "Updating package lists..."
+  sudo pacman -Sy --noconfirm
+
+  # Install Docker
+  echo "Installing Docker..."
+  sudo pacman -S --noconfirm docker
+
+  # Start Docker service
+  echo "Starting Docker service..."
+  sudo systemctl start docker
+  sudo systemctl enable docker
+
+  # Add current user to docker group
+  echo "Adding current user to docker group..."
+  sudo usermod -aG docker "$USER"
+
+  echo "Docker installation complete!"
+  newgrp docker
+}
+
 ensure_docker_available() {
   if ! command -v docker >/dev/null 2>&1; then
     error "Docker CLI is not installed or not in PATH."
@@ -55,6 +84,7 @@ container_running() {
 }
 
 install_container() {
+  install_docker_if_needed
   ensure_docker_available
   ensure_docker_running
 
@@ -82,6 +112,7 @@ install_container() {
 }
 
 start_container() {
+  install_docker_if_needed
   ensure_docker_available
   ensure_docker_running
 
@@ -98,6 +129,7 @@ start_container() {
     echo "Starting and attaching to container '$CONTAINER_NAME'..."
     docker start -ai "$CONTAINER_NAME"
   fi
+}
 }
 
 delete_all() {
