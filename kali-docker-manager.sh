@@ -5,14 +5,17 @@ set -euo pipefail
 CONTAINER_NAME="kali-persistent"
 IMAGE_NAME="kalilinux/kali-rolling"
 VOLUME_NAME="kali-data"
+SYNC_IMAGE_NAME="kali-persistent-sync:latest"
+LAN_SESSION_CONTAINER_NAME="kali-lan-session"
 
 print_help() {
   cat <<'EOF'
-Usage: kali-docker-manager.sh [--install | --start | --delete-all | -h | --help]
+Usage: kali-docker-manager.sh [--install | --start | --start-lan | --delete-all | -h | --help]
 
 Options:
   --install     Create persistent Kali container if not already installed.
   --start       Start existing container if needed, then attach.
+  --start-lan   Start a LAN-capable host-network Kali session.
   --delete-all  Remove container, volume, and image after confirmation.
   -h, --help    Show this help message.
 EOF
@@ -70,6 +73,10 @@ ensure_docker_running() {
   fi
 }
 
+image_exists() {
+  docker image inspect "$1" >/dev/null 2>&1
+}
+
 volume_exists() {
   docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1
 }
@@ -80,6 +87,59 @@ container_exists() {
 
 container_running() {
   [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" == "true" ]]
+}
+
+lan_session_container_exists() {
+  docker container inspect "$LAN_SESSION_CONTAINER_NAME" >/dev/null 2>&1
+}
+
+lan_session_container_running() {
+  [[ "$(docker inspect -f '{{.State.Running}}' "$LAN_SESSION_CONTAINER_NAME" 2>/dev/null)" == "true" ]]
+}
+
+ensure_volume_exists() {
+  # Create a named volume once; it stores /root to keep data persistent.
+  if ! volume_exists; then
+    echo "Creating Docker volume: $VOLUME_NAME"
+    docker volume create "$VOLUME_NAME" >/dev/null
+  else
+    echo "Volume already exists: $VOLUME_NAME"
+  fi
+}
+
+sync_managed_container_to_image() {
+  if ! container_exists; then
+    return 0
+  fi
+
+  if container_running; then
+    echo "Stopping running container '$CONTAINER_NAME' before syncing..."
+    docker stop "$CONTAINER_NAME" >/dev/null
+  fi
+
+  echo "Syncing '$CONTAINER_NAME' state to image: $SYNC_IMAGE_NAME"
+  docker commit "$CONTAINER_NAME" "$SYNC_IMAGE_NAME" >/dev/null
+}
+
+recreate_managed_container_from_sync_image() {
+  if ! image_exists "$SYNC_IMAGE_NAME"; then
+    error "Cannot recreate managed container; sync image not found: $SYNC_IMAGE_NAME"
+  fi
+
+  if container_running; then
+    docker stop "$CONTAINER_NAME" >/dev/null
+  fi
+
+  if container_exists; then
+    docker rm "$CONTAINER_NAME" >/dev/null
+  fi
+
+  echo "Recreating managed container '$CONTAINER_NAME' from synced state..."
+  docker create \
+    -it \
+    --name "$CONTAINER_NAME" \
+    -v "$VOLUME_NAME:/root" \
+    "$SYNC_IMAGE_NAME" /bin/bash >/dev/null
 }
 
 install_container() {
@@ -93,13 +153,7 @@ install_container() {
   
   ensure_docker_running
 
-  # Create a named volume once; it stores /root to keep data persistent.
-  if ! volume_exists; then
-    echo "Creating Docker volume: $VOLUME_NAME"
-    docker volume create "$VOLUME_NAME" >/dev/null
-  else
-    echo "Volume already exists: $VOLUME_NAME"
-  fi
+  ensure_volume_exists
 
   if container_exists; then
     echo "Container '$CONTAINER_NAME' is already installed."
@@ -142,6 +196,60 @@ start_container() {
   fi
 }
 
+start_container_lan() {
+  install_docker_if_needed
+  ensure_docker_available
+
+  # Refresh shell group membership if docker was just installed
+  if ! docker info >/dev/null 2>&1; then
+    exec newgrp docker
+  fi
+
+  ensure_docker_running
+
+  ensure_volume_exists
+
+  # Prevent stale LAN session name collisions from previous interrupted runs.
+  if lan_session_container_running; then
+    docker stop "$LAN_SESSION_CONTAINER_NAME" >/dev/null
+  fi
+  if lan_session_container_exists; then
+    docker rm "$LAN_SESSION_CONTAINER_NAME" >/dev/null
+  fi
+
+  if container_exists; then
+    sync_managed_container_to_image
+  fi
+
+  local source_image="$SYNC_IMAGE_NAME"
+  if ! image_exists "$source_image"; then
+    echo "Pulling image: $IMAGE_NAME"
+    docker pull "$IMAGE_NAME"
+    source_image="$IMAGE_NAME"
+  fi
+
+  echo "Starting LAN-capable Kali session (host network)..."
+  set +e
+  docker run -it \
+    --name "$LAN_SESSION_CONTAINER_NAME" \
+    --network host \
+    --cap-add NET_RAW \
+    --cap-add NET_ADMIN \
+    -v "$VOLUME_NAME:/root" \
+    "$source_image"
+  local lan_exit_code=$?
+  set -e
+
+  if lan_session_container_exists; then
+    echo "Syncing LAN session state to image: $SYNC_IMAGE_NAME"
+    docker commit "$LAN_SESSION_CONTAINER_NAME" "$SYNC_IMAGE_NAME" >/dev/null
+    docker rm "$LAN_SESSION_CONTAINER_NAME" >/dev/null
+    recreate_managed_container_from_sync_image
+  fi
+
+  return "$lan_exit_code"
+}
+
 delete_all() {
   ensure_docker_available
   ensure_docker_running
@@ -164,6 +272,14 @@ delete_all() {
     echo "Container not found: $CONTAINER_NAME"
   fi
 
+  if lan_session_container_exists; then
+    # Remove stale LAN session container if it exists from interrupted runs.
+    echo "Removing LAN session container (force): $LAN_SESSION_CONTAINER_NAME"
+    docker rm -f "$LAN_SESSION_CONTAINER_NAME" >/dev/null
+  else
+    echo "LAN session container not found: $LAN_SESSION_CONTAINER_NAME"
+  fi
+
   if volume_exists; then
     # Force volume removal to avoid partial cleanup states.
     echo "Removing volume (force): $VOLUME_NAME"
@@ -180,7 +296,14 @@ delete_all() {
     echo "Image not found locally: $IMAGE_NAME"
   fi
 
-  if container_exists || volume_exists || docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+  if image_exists "$SYNC_IMAGE_NAME"; then
+    echo "Removing synced state image (force): $SYNC_IMAGE_NAME"
+    docker image rm -f "$SYNC_IMAGE_NAME" >/dev/null
+  else
+    echo "Synced state image not found locally: $SYNC_IMAGE_NAME"
+  fi
+
+  if container_exists || lan_session_container_exists || volume_exists || docker image inspect "$IMAGE_NAME" >/dev/null 2>&1 || image_exists "$SYNC_IMAGE_NAME"; then
     error "Cleanup did not fully complete. One or more resources still exist."
   fi
 
@@ -199,6 +322,9 @@ main() {
       ;;
     --start)
       start_container
+      ;;
+    --start-lan)
+      start_container_lan
       ;;
     --delete-all)
       delete_all

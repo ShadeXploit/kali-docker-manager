@@ -29,6 +29,7 @@ chmod +x ./kali-docker-manager.sh
 ```bash
 ./kali-docker-manager.sh --install
 ./kali-docker-manager.sh --start
+./kali-docker-manager.sh --start-lan
 ./kali-docker-manager.sh --delete-all
 ./kali-docker-manager.sh -h
 ./kali-docker-manager.sh --help
@@ -52,12 +53,22 @@ chmod +x ./kali-docker-manager.sh
 - If running, attaches immediately.
 - If stopped, starts then attaches.
 
+### --start-lan
+
+- Verifies Docker CLI and daemon availability.
+- Creates the persistent volume (`kali-data`) if missing.
+- Syncs the managed container state into a local snapshot image.
+- Starts a LAN-capable host-network Kali session with `NET_RAW` and `NET_ADMIN`.
+- On exit, syncs LAN-session filesystem changes back into the managed container state.
+- Reuses the same persistent `/root` volume.
+
 ### --delete-all
 
 - Requests interactive confirmation (y/n).
 - Stops and removes the container if present.
+- Removes the temporary LAN session container if present.
 - Removes the persistent volume if present.
-- Attempts to remove the Kali image for complete cleanup.
+- Attempts to remove the Kali image and synced state image for complete cleanup.
 - Prints completion status.
 
 ### -h / --help
@@ -69,6 +80,7 @@ chmod +x ./kali-docker-manager.sh
 - The script uses strict shell safety settings: `set -euo pipefail`.
 - If Docker is not running, the script exits with clear instructions.
 - Data persistence is provided through the Docker volume mounted at `/root`.
+- LAN mode now syncs container filesystem changes so installs/config changes carry into normal `--start` sessions.
 
 ## Example Workflow
 
@@ -78,6 +90,9 @@ chmod +x ./kali-docker-manager.sh
 
 # Later sessions
 ./kali-docker-manager.sh --start
+
+# LAN-capable session
+./kali-docker-manager.sh --start-lan
 
 # Full removal
 ./kali-docker-manager.sh --delete-all
