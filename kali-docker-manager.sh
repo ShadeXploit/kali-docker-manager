@@ -136,9 +136,10 @@ recreate_managed_container_from_sync_image() {
 
   echo "Recreating managed container '$CONTAINER_NAME' from synced state..."
   docker create \
+    -it \
     --name "$CONTAINER_NAME" \
     -v "$VOLUME_NAME:/root" \
-    "$SYNC_IMAGE_NAME" >/dev/null
+    "$SYNC_IMAGE_NAME" /bin/bash >/dev/null
 }
 
 install_container() {
